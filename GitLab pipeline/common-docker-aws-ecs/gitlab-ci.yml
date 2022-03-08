@@ -1,0 +1,57 @@
+# bitbucket-pipelines.yml 
+# =========== Steps ===============
+# - Build and Push to ECR
+# - Deploy to ECS
+# =========== Variables ===========
+# AWS_KEY
+# AWS_SECRET
+# AWS_ECR_URI
+# AWS_ECR_REGISTRY_IMAGE
+# AWS_ECR_REGISTRY_IMAGE_TAG
+# AWS_DEFAULT_REGION
+# TASK_DEFINITION_NAME
+# CLUSTER_NAME
+# SERVICE_NAME
+# =================================
+
+image: docker:latest
+
+services:
+  - docker:dind
+before_script:
+  - apk add --no-cache curl jq python3 py3-pip
+  - pip install awscli
+  - aws ecr get-login-password | docker login --username "$ECR_USERNAME" --password-stdin $ECR_URI
+  - aws --version
+  - docker info
+  - docker --version
+stages:
+  - build
+  - deploy
+  
+docker-build:  
+  stage: build
+  script:
+    - docker build --pull -t "$ECR_REGISTRY_IMAGE:$TAGNAME" .
+    - docker push "$ECR_REGISTRY_IMAGE:$TAGNAME"
+    - echo $ECR_URI:$TAGNAME
+  only:
+    - master
+
+deploy:
+  stage: deploy
+  only:
+    - master
+  script:
+    - echo $ECR_URI:$TAGNAME
+    - echo `aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_NAME" --region "${AWS_DEFAULT_REGION}"` > input.json
+    - cat input.json
+    - echo $(cat input.json | jq '.taskDefinition.containerDefinitions[].image="'$ECR_REGISTRY_IMAGE':'latest'"') >  input2.json
+    - cat input2.json
+    - echo $(cat input2.json | jq '.taskDefinition') > input3.json
+    - cat input3.json
+    - echo $(cat input3.json | jq  'del(.taskDefinitionArn)' | jq 'del(.revision)' | jq 'del(.status)' | jq 'del(.compatibilities)' | jq 'del(.registeredBy)' | jq 'del(.registeredAt)' | jq 'del(.requiresAttributes)' ) > input4.json
+    - cat input4.json
+    - aws ecs register-task-definition --cli-input-json file://input4.json --region ${AWS_DEFAULT_REGION}
+    - revision=$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_NAME" --region ${AWS_DEFAULT_REGION} | egrep "revision" | tr "/" " " | awk '{print $2}' | sed 's/"$//' | cut -d "," -f 1)
+    - aws ecs update-service --force-new-deployment --cluster "$CLUSTER_NAME" --service "$SERVICE_NAME" --task-definition "$TASK_DEFINITION_NAME":${revision} --region ${AWS_DEFAULT_REGION}
