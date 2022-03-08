@@ -1,0 +1,51 @@
+# bitbucket-pipelines.yml 
+# =========== Steps ===============
+# - Build and Push to ECR
+# - Deploy to ECS
+# =========== Variables ===========
+# AWS_KEY
+# AWS_SECRET
+# AWS_ECR_URI
+# AWS_ECR_REGISTRY_IMAGE
+# AWS_ECR_REGISTRY_IMAGE_TAG
+# AWS_DEFAULT_REGION
+# TASK_DEFINITION_NAME
+# CLUSTER_NAME
+# SERVICE_NAME
+# =================================
+
+image: python:3.7.4-buster
+pipelines:
+  branches:
+    master:
+      - step:
+          name: Build, Push ECR & Deploy ECS
+          services:
+            - docker
+          caches:
+            - pip
+          script:
+            - apt -y update && apt -y install jq 
+            - pip3 install awscli
+            - IMAGE="${AWS_ECR_REGISTRY_IMAGE}"
+            - TAG=${BITBUCKET_BRANCH:-$BITBUCKET_TAG}
+            - aws configure set aws_access_key_id "${AWS_KEY}"
+            - aws configure set aws_secret_access_key "${AWS_SECRET}"
+            - eval $(aws ecr get-login --no-include-email --region ${AWS_DEFAULT_REGION} | sed 's;https://;;g')
+            - aws --version
+            - docker info
+            - docker --version
+            - docker build -t $IMAGE:$TAG .
+            - docker push $IMAGE:$TAG
+            - echo $AWS_ECR_URI:$TAG
+            - echo `aws ecs describe-task-definition --task-definition "${TASK_DEFINITION_NAME}" --region "${AWS_DEFAULT_REGION}"` > input.json
+            - cat input.json
+            - echo $(cat input.json | jq '.taskDefinition.containerDefinitions[].image="'${AWS_ECR_REGISTRY_IMAGE}':'${AWS_ECR_REGISTRY_IMAGE_TAG}'"') >  input2.json
+            - cat input2.json
+            - echo $(cat input2.json | jq '.taskDefinition') > input3.json
+            - cat input3.json
+            - echo $(cat input3.json | jq  'del(.taskDefinitionArn)' | jq 'del(.revision)' | jq 'del(.status)' | jq 'del(.compatibilities)' | jq 'del(.registeredBy)' | jq 'del(.registeredAt)' | jq 'del(.requiresAttributes)' ) > input4.json
+            - cat input4.json
+            - aws ecs register-task-definition --cli-input-json file://input4.json --region ${AWS_DEFAULT_REGION}
+            - revision=$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_NAME" --region ${AWS_DEFAULT_REGION} | egrep "revision" | tr "/" " " | awk '{print $2}' | sed 's/"$//' | cut -d "," -f 1)
+            - aws ecs update-service --force-new-deployment --cluster "${CLUSTER_NAME}" --service "${SERVICE_NAME}" --task-definition "$TASK_DEFINITION_NAME":${revision} --region ${AWS_DEFAULT_REGION}
