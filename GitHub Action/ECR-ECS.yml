@@ -5,28 +5,27 @@ name: Build, Push to ECR and Deploy to ECS
 # AWS_SECRET_ACCESS_KEY
 # AWS_REGION
 # 
-# ==== Please modify below name ====
-# ==================================
-# ECR-REPOSITORY-NAME
-# IMAGE-TAG-NAME
-# SERVICE-TASK-DEF-NAME
-# CONTAINER-NAME-IN-TASK-DEFINITION
-# SERVICE-NAME
-# CLUSTER-NAME
+# ==== Github Var ====
+# ECR_REPOSITORY_NAME
+# IMAGE_TAG_NAME
+# SERVICE_TASK_DEF_NAME
+# CONTAINER_NAME_IN_TASK_DEFINITION
+# SERVICE_NAME
+# CLUSTER_NAME
 # 
 # ==================================
 
 on:
   pull_request:
     branches:
-      - deploy
+      - production
     types: [synchronize, ready_for_review]
   push:
     branches:
-      - deploy
+      - production
       
 jobs:
-  deploy:
+  production:
     name: Build, Push to ECR and Deploy to ECS
     runs-on: ubuntu-latest
 
@@ -49,8 +48,8 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ECR-REPOSITORY-NAME
-          IMAGE_TAG: IMAGE-TAG-NAME
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ vars.IMAGE_TAG_NAME }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -58,7 +57,7 @@ jobs:
           
       - name: Download task definition
         run: |
-          aws ecs describe-task-definition --task-definition SERVICE-TASK-DEF-NAME \
+          aws ecs describe-task-definition --task-definition ${{ vars.SERVICE_TASK_DEF_NAME }}  \
           --query taskDefinition > ecs-task-definition.json
           
       - name: Fill in the new image ID in the Amazon ECS task definition
@@ -66,7 +65,7 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ecs-task-definition.json
-          container-name: CONTAINER-NAME-IN-TASK-DEFINITION
+          container-name: ${{ vars.CONTAINER_NAME_IN_TASK_DEFINITION }}
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
@@ -74,6 +73,6 @@ jobs:
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: SERVICE-NAME
-          cluster: CLUSTER-NAME
-          wait-for-service-stability: true
+          service: ${{ vars.SERVICE_NAME }}
+          cluster: ${{ vars.CLUSTER_NAME }}
+          wait-for-service-stability: false
